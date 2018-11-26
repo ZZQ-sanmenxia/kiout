@@ -6,24 +6,26 @@
 # ---------------------------------------------------------
 
 from time import time
+
 import numpy as np
 from pykalman import KalmanFilter
-from util import load_mot, iou, track_interpolation
+from util import load_mot, iou, interp_tracks
 
-def criteria(x, track):
+def active_criteria(x, tracks):
     """
     Take matching candidate and track, offset the track's last bounding box by the predicted offset, and calculate IOU.
 
     Args:
         x (list [roi, bbox, score]): a detection from this frame.
-        track (list [[frames], Kalman_filter]): a track containing all frames and a Kalman filter associated with it.
+        tracks (list [[frames], Kalman_filter]): a track containing all frames and a Kalman filter associated with it.
     """
-    dx, dy, _, _ = track[0][-1]['pred_state'] - track[0][-1]['cur_state']
-    offset_vector = np.array([dy, dx, dy, dx])
-    offset_roi = track[0][-1]['roi'] + offset_vector
-    th = iou(x['roi'], offset_roi)
-    return th
+    ofdx, ofdy, _, _ = tracks[0][-1]['pred_state'] - tracks[0][-1]['cur_state']
+    offset_vector = np.array([ofdy, ofdx, ofdy, ofdx])
+    offset_roi = tracks[0][-1]['roi'] + offset_vector
 
+    th = iou(x['roi'], offset_roi)
+
+    return th
 
 def setup_kf(imean, a=[[1, 0, 0.5, 0], [0, 1, 0, 0.5], [0, 0, 1, 0], [0, 0, 0, 1]], o=[[1, 0, 0, 0], [0, 1, 0, 0]]):
     """
@@ -38,10 +40,11 @@ def setup_kf(imean, a=[[1, 0, 0.5, 0], [0, 1, 0, 0.5], [0, 0, 1, 0], [0, 0, 0, 1
     """
     return KalmanFilter(transition_matrices=a, observation_matrices=o, initial_state_mean=[*imean,0,0])
 
-
-def track_iou(detections, sigma_l, sigma_iou, sigma_p, t_min, skip_frames = False, n_skip = 3):
+def track_iou(detections, sigma_l, sigma_iou, sigma_p, sigma_len, skip_frames=False, n_skip=3):
     """
-    Simple IOU based tracker.
+    Simple IOU based tracker with Kalman filter.
+
+    This tracker is based on the original IOU Tracker.
     See "High-Speed Tracking-by-Detection Without Using Image Information by E. Bochinski, V. Eiselein, T. Sikora" for
     more information.
 
@@ -50,7 +53,7 @@ def track_iou(detections, sigma_l, sigma_iou, sigma_p, t_min, skip_frames = Fals
          sigma_l (float): low detection threshold.
          sigma_iou (float): IOU threshold.
          sigma_p (int): maximum frames a track remains pending before termination.
-         t_min (int): minimum track length in frames.
+         sigma_len (int): minimum track length in frames.
          skip_frames (boolean): whether to skip some frames to speed up tracking.
          n_skip (int): when skip_frames is True, the program uses one out of every n_skip frames for tracking.
 
@@ -62,94 +65,105 @@ def track_iou(detections, sigma_l, sigma_iou, sigma_p, t_min, skip_frames = Fals
     tracks_pending = []
     tracks_finished = []
 
-    for frame_num, detections_frame in enumerate(detections, start=1):
+    sigma_l = 0.4
+    sigma_iou = 0.3
+    sigma_p = 24 # Maximum pending period
+    sigma_len = 3 # Minimum track length
 
+    for frame_num, detections_frame in enumerate(detections, start=1):
         if skip_frames and (frame_num % n_skip != 0): continue # optionally skip (n_skip - 1) of each (n_skip) frames
         
         # apply low threshold to detections
-        dets = [det for det in detections_frame if det['score'] >= sigma_l]
+        detections = [det for det in detections_frame if det['score'] >= sigma_l]
 
         updated_tracks = []
-        for track in tracks_active:
-            if len(dets) > 0:
+        for tracks in tracks_active:
+            if len(detections) > 0:
                 # get det with highest iou
-                best_match = max(dets, key=lambda x: criteria(x, track))
-                if criteria(best_match, track) >= sigma_iou:
-                    track['bboxes'].append(best_match['bbox'])
-                    best_match['cur_state'], best_match['cur_covar'] = track[1].filter_update(track[0][-1]['cur_state'], track[0][-1]['cur_covar'], best_match['centroid'])
-                    best_match['pred_state'], best_match['pred_covar'] = track[1].filter_update(best_match['cur_state'], best_match['cur_covar'])
+                best_match = max(detections, key=lambda x: active_criteria(x, tracks))
 
-                    track[0].append(best_match)
-                    updated_tracks.append(track)
+                if active_criteria(best_match, tracks) >= sigma_iou:
+                    filtered_state_mean, filtered_state_cov = tracks[1].filter_update(tracks[0][-1]['cur_state'], tracks[0][-1]['cur_covar'], best_match['centroid'])
+                    best_match['cur_state'] = filtered_state_mean
+                    best_match['cur_covar'] = filtered_state_cov
+                    best_match['pred_state'], best_match['pred_covar'] = tracks[1].filter_update(filtered_state_mean, filtered_state_cov)
+
+                    tracks[0].append(best_match)
+                    updated_tracks.append(tracks)
 
                     # remove from best matching detection from detections
-                    del dets[dets.index(best_match)]
+                    del detections[detections.index(best_match)]
 
             # if track was not updated
-            if len(updated_tracks) == 0 or track is not updated_tracks[-1]:
-                # keep track in tracks_pending, where tracks will be kept for sigma_p frames before deleted
-                tracks_pending.append(track)
-        
+            if len(updated_tracks) == 0 or tracks is not updated_tracks[-1]:
+                # keep track in tracks_pending, where tracks will be kept for sigma_p frames before track termination
+                tracks_pending.append(tracks)
+
         tracks_to_keep = []
-        for track in tracks_pending:
-            if frame_num - track[0][-1]['frame'] > sigma_p:
-                if len(track[0]) >= t_min:
-                    tracks_finished.append(track[0]) # finish long tracks that have been inactive for more than sigma_p frames
+        for tracks in tracks_pending:
+            if frame_num - tracks[0][-1]['frame'] > sigma_p:
+                if len(tracks[0]) >= sigma_len: # finish long tracks that have been inactive for more than sigma_p frames
+                    tracks_finished.append(tracks[0])
                 else:
                     continue # discard inactive, short tracks
-            
-            elif len(dets) == 0:
+
+            elif len(detections) == 0:
                 # if track is fresh enough but no detections in this frame are available for matching, 
                 # keep the track pending and extrapolate for one time step
-                track[0][-1]['pred_state'], track[0][-1]['pred_covar'] = track[1].filter_update(track[0][-1]['pred_state'], track[0][-1]['pred_covar'])
-                tracks_to_keep.append(track)
-            
+                tracks[0][-1]['pred_state'], tracks[0][-1]['pred_covar'] = tracks[1].filter_update(tracks[0][-1]['pred_state'], tracks[0][-1]['pred_covar'])
+                tracks_to_keep.append(tracks)
+
             else:
                 # replicating the process in tracks_active
                 # get det with highest iou
-                best_match = max(dets, key=lambda x: criteria(x, track))
-                if criteria(best_match, track) >= sigma_iou:
-                    track['bboxes'].append(best_match['bbox'])
-                    best_match['cur_state'], best_match['cur_covar'] = track[1].filter_update(track[0][-1]['cur_state'], track[0][-1]['cur_covar'], best_match['centroid'])
-                    best_match['pred_state'], best_match['pred_covar'] = track[1].filter_update(best_match['cur_state'], best_match['cur_covar'])
+                best_match = max(detections, key=lambda x: active_criteria(x, tracks))
 
-                    track[0].append(best_match)
-                    updated_tracks.append(track)
+                if active_criteria(best_match, tracks) >= sigma_iou:
+                    filtered_state_mean, filtered_state_cov = tracks[1].filter_update(tracks[0][-1]['cur_state'], tracks[0][-1]['cur_covar'], best_match['centroid'])
+                    best_match['cur_state'] = filtered_state_mean
+                    best_match['cur_covar'] = filtered_state_cov
+                    best_match['pred_state'], best_match['pred_covar'] = tracks[1].filter_update(filtered_state_mean, filtered_state_cov)
 
-                    # remove from best matching detection from detections
-                    del dets[dets.index(best_match)]
-        
+                    tracks[0].append(best_match)
+                    updated_tracks.append(tracks)
+
+                    del detections[detections.index(best_match)]
+                else:
+                    # if the proposed match does not pass the threshold, keep the track pending
+					# tracks[0][-1]['pred_state'], tracks[0][-1]['pred_covar'] = tracks[1].filter_update(tracks[0][-1]['pred_state'], tracks[0][-1]['pred_covar'])
+                    tracks_to_keep.append(tracks)
+
         # form pending tracks for next frame
         tracks_pending = tracks_to_keep
 
         # create new tracks
-        new_tracks = [[[det], setup_kf(det['centroid'])] for det in dets]
+        new_tracks = [[[det], setup_kf(det['centroid'])] for det in detections]
 
         for det in new_tracks:
             det[0][0]['cur_state'] = [*det[0][0]['centroid'], 0, 0]
             det[0][0]['cur_covar'] = [[100, 0, 25, 0], [0, 100, 0, 25], [0, 0, 25, 0], [0, 0, 0, 25]]
             det[0][0]['pred_state'], det[0][0]['pred_covar'] = det[1].filter_update(det[0][0]['cur_state'], det[0][0]['cur_covar'])
 
+        tracks_active = updated_tracks + new_tracks
+
     # finish all remaining active tracks
-    tracks_finished += [track[0] for track in tracks_active if len(track[0]) >= t_min]
-    tracks_finished += [track[0] for track in tracks_pending if len(track[0]) >= t_min]
-    tracks_finished = track_interpolation(tracks_finished)
+    tracks_finished += [track[0] for track in tracks_active if len(track[0]) >= sigma_p]
+    tracks_finished += [track[0] for track in tracks_pending if len(track[0]) >= sigma_p]
+    tracks_trimmed = interp_tracks(tracks_finished)
 
-    return tracks_finished
+    return tracks_trimmed
 
 
-def track_iou_matlab_wrapper(detections, sigma_l, sigma_iou, sigma_p, t_min, skip_frames = False, n_skip = 3):
+def track_iou_matlab_wrapper(detections, sigma_l, sigma_h, sigma_iou, sigma_p):
     """
     Matlab wrapper of the iou tracker for the detrac evaluation toolkit.
 
     Args:
          detections (numpy.array): numpy array of detections, usually supplied by run_tracker.m
          sigma_l (float): low detection threshold.
+         sigma_h (float): high detection threshold.
          sigma_iou (float): IOU threshold.
-         sigma_p (int): maximum frames a track remains pending before termination.
-         t_min (int): minimum track length in frames.
-         skip_frames (boolean): whether to skip some frames to speed up tracking.
-         n_skip (int): when skip_frames is True, the program uses one out of every n_skip frames for tracking.
+         sigma_p (float): minimum track length in frames.
 
     Returns:
         float: speed in frames per second.
@@ -157,9 +171,9 @@ def track_iou_matlab_wrapper(detections, sigma_l, sigma_iou, sigma_p, t_min, ski
     """
 
     detections = detections.reshape((7, -1)).transpose()
-    dets = load_mot(detections)
+    detections = load_mot(detections)
     start = time()
-    tracks = track_iou(dets, sigma_l, sigma_iou, sigma_p, t_min, skip_frames, n_skip)
+    tracks = track_iou(detections, sigma_l, sigma_h, sigma_iou, sigma_p)
     end = time()
 
     id_ = 1
@@ -169,7 +183,7 @@ def track_iou_matlab_wrapper(detections, sigma_l, sigma_iou, sigma_p, t_min, ski
             out += [float(tracklet['roi'][1]), float(tracklet['roi'][0]), float(tracklet['roi'][3] - tracklet['roi'][1]), float(tracklet['roi'][2] - tracklet['roi'][0]), float(tracklet['frame']), float(id_)]
         id_ += 1
 
-    num_frames = len(dets)
+    num_frames = len(detections)
 
     # this part occasionally throws ZeroDivisionError when evaluated in the DETRAC toolkit without the except clause 
     try:
