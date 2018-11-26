@@ -27,7 +27,7 @@ Clone this repository into "DETRAC-MOT-toolkit/trackers/".
 Follow the instructions to configure the toolkit for tracking evaluation and set the tracker name in "DETRAC_experiment.m":
 
 ```
-tracker.trackerName = 'iou-tracker';
+tracker.trackerName = 'kiout';
 ```
 
 and run the script.
