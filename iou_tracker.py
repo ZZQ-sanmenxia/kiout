@@ -65,11 +65,6 @@ def track_iou(detections, sigma_l, sigma_iou, sigma_p, sigma_len, skip_frames=Fa
     tracks_pending = []
     tracks_finished = []
 
-    sigma_l = 0.4
-    sigma_iou = 0.3
-    sigma_p = 24 # Maximum pending period
-    sigma_len = 3 # Minimum track length
-
     for frame_num, detections_frame in enumerate(detections, start=1):
         if skip_frames and (frame_num % n_skip != 0): continue # optionally skip (n_skip - 1) of each (n_skip) frames
         
@@ -154,16 +149,18 @@ def track_iou(detections, sigma_l, sigma_iou, sigma_p, sigma_len, skip_frames=Fa
     return tracks_trimmed
 
 
-def track_iou_matlab_wrapper(detections, sigma_l, sigma_h, sigma_iou, sigma_p):
+def track_iou_matlab_wrapper(detections, sigma_l, sigma_iou, sigma_p, sigma_len, skip_frames=False, n_skip=3):
     """
     Matlab wrapper of the iou tracker for the detrac evaluation toolkit.
 
     Args:
          detections (numpy.array): numpy array of detections, usually supplied by run_tracker.m
          sigma_l (float): low detection threshold.
-         sigma_h (float): high detection threshold.
          sigma_iou (float): IOU threshold.
-         sigma_p (float): minimum track length in frames.
+         sigma_p (int): maximum frames a track remains pending before termination.
+         sigma_len (int): minimum track length in frames.
+         skip_frames (boolean): whether to skip some frames to speed up tracking.
+         n_skip (int): when skip_frames is True, the tracker uses only one out of every n_skip frames for tracking.
 
     Returns:
         float: speed in frames per second.
@@ -173,7 +170,7 @@ def track_iou_matlab_wrapper(detections, sigma_l, sigma_h, sigma_iou, sigma_p):
     detections = detections.reshape((7, -1)).transpose()
     detections = load_mot(detections)
     start = time()
-    tracks = track_iou(detections, sigma_l, sigma_h, sigma_iou, sigma_p)
+    tracks = track_iou(detections, sigma_l, sigma_iou, sigma_p, sigma_len, skip_frames, n_skip)
     end = time()
 
     id_ = 1

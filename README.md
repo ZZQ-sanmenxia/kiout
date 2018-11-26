@@ -1,7 +1,11 @@
 ## Kalman-IOU Tracker
 Python implementation of the Kalman-IOU Tracker.
 
-This tracker is a modified version based on the original [IOU Tracker](https://github.com/bochinski/iou-tracker). Please consider citing their work:
+This tracker is modified based on the original [IOU Tracker](https://github.com/bochinski/iou-tracker), which is a simple, high-speed tracker that works really well on the [UA-DETRAC](https://detrac-db.rit.albany.edu/) dataset. We make use of a Kalman filter to estimate object location and speed together, and obtained incremental performance improvements over the original version. 
+
+The Kalman filter's capability of making predictions allows us to skip frames while still keeping track of the object. Skipping frames in a tracking-by-detection task means the detector will process significantly less frames. The Kalman-IOU Tracker, when used with the [EB](http://zyb.im/research/EB/) detector and configured to skip 2/3 of the frames, can run in real-time while outperforming the original IOU Tracker on the DETRAC-Train dataset.
+
+This repo is predominantly based on the original [IOU Tracker](https://github.com/bochinski/iou-tracker). Please consider citing their work:
 
 ```
 @INPROCEEDINGS{1517Bochinski2017,
@@ -16,41 +20,7 @@ This tracker is a modified version based on the original [IOU Tracker](https://g
 ```
 
 
-## Demo
-Several demo scripts are included to reproduce the reported results on the [UA-DETRAC](http://detrac-db.rit.albany.edu/)
-and the [MOT](https://motchallenge.net/) 16/17 benchmarks.
-
-Basic demo script:
-```
-$ ./demo.py -h
-usage: demo.py [-h] -d DETECTION_PATH -o OUTPUT_PATH [-sl SIGMA_L]
-               [-sh SIGMA_H] [-si SIGMA_IOU] [-tm T_MIN]
-
-IOU Tracker demo script
-
-optional arguments:
-  -h, --help            show this help message and exit
-  -d DETECTION_PATH, --detection_path DETECTION_PATH
-                        full path to CSV file containing the detections
-  -o OUTPUT_PATH, --output_path OUTPUT_PATH
-                        output path to store the tracking results (MOT
-                        challenge devkit compatible format)
-  -sl SIGMA_L, --sigma_l SIGMA_L
-                        low detection threshold
-  -sh SIGMA_H, --sigma_h SIGMA_H
-                        high detection threshold
-  -si SIGMA_IOU, --sigma_iou SIGMA_IOU
-                        intersection-over-union threshold
-  -tm T_MIN, --t_min T_MIN
-                        minimum track length
-```
-
-Example for the MOT17-04 sequence (detections can be downloaded [here](https://motchallenge.net/data/MOT17/)):
-```
-./demo.py -d ../mot17/train/MOT17-04-SDP/det/det.txt -o res/iou-tracker/MOT17-04-SDP.txt
-```
-
-### Results from DETRAC Dataset
+## Results from DETRAC Dataset
 To reproduce the reported results, download and extract the [DETRAC-toolkit](http://detrac-db.rit.albany.edu/download)
 and the detections you want to evaluate. Download links for the EB detections are provided below.
 Clone this repository into "DETRAC-MOT-toolkit/trackers/".
@@ -62,10 +32,10 @@ tracker.trackerName = 'iou-tracker';
 
 and run the script.
 
-Note that you still need a working python environment with numpy installed.
+Note that you still need a working python environment with numpy and [pykalman](http://pykalman.github.com) installed.
 You should obtain something like the following results for the 'DETRAC-Train' set:
 
-##### DETRAC-Train Results with EB Detector
+### DETRAC-Train Results with EB Detector
 | Tracker | Frames | PR-MT | PR-PT  | PR-ML | PR-FP   | PR-FN   | PR-IDs| PR-FM | PR-MOTA | PR-MOTP | PR-MOTAL |
 | -------- | ----- | ----- | ------ | ----- | ------- | ------- | ----- | ----- | ------- | ------- | -------- |
 | IOU | All        |32.34  |12.88   |20.93  |7958.82  |163739.85|4129.40|4221.89|35.77    |40.81    |36.48     |
@@ -75,7 +45,7 @@ You should obtain something like the following results for the 'DETRAC-Train' se
 |KIOU | 1/4 | 20.8 | 12.6 | 32.8 | 11163.4 | 192857.4 | 628.1 | 711.1 | 30.8 | 40.9 | 30.9 |
 
 
-##### DETRAC-Test (Overall) Results
+### DETRAC-Test (Overall) Results
 The reference results are taken from the [UA-DETRAC results](http://detrac-db.rit.albany.edu/TraRet) site. Only the best tracker / detector
 combination is displayed for each reference method.
 
@@ -92,14 +62,4 @@ combination is displayed for each reference method.
 |**KIOU**       | EB       | **21.1\%** | 28.6\%   | **21.9\%** | **17.6\%** | 462.2  | 712.1    | 19046.8    | **159178.3** |  - |
 
 ##### EB detections
-The public detections of [EB](http://zyb.im/research/EB/) are not available on the
-DETRAC training set and miss some low scoring detections. The EB detections we used for the tables above and our
-publication are available here:
-
-* [EB Train](https://tubcloud.tu-berlin.de/s/EtC6cFEYsAU0gFQ/download)
-* [EB Test](https://tubcloud.tu-berlin.de/s/oKM3dYhJbMFl1dY/download)
-
-
-## Contact
-If you have any questions or encounter problems regarding the method/code feel free to contact me
-at bochinski@nue.tu-berlin.de
+These results are evaluated on detections of [EB](http://zyb.im/research/EB/) detector. We obtained our copy of detections from the authors of the original [IOU Tracker](https://github.com/bochinski/iou-tracker).
