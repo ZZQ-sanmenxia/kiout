@@ -37,7 +37,8 @@ def load_mot(detections):
         scores = raw[idx, 6]
         dets = []
         for bb, s in zip(bbox, scores):
-            dets.append({'bbox': (bb[0], bb[1], bb[2], bb[3]), 'score': s})
+            # Adapt to MRCNN format for bboxes: y0, x0, y1, x1
+            dets.append({'roi': [bb[1], bb[0], bb[3], bb[2]], 'score': s, 'centroid': [0.5*(bb[0] + bb[2]), 0.5*(bb[1] + bb[3])], 'frame': i})
         data.append(dets)
 
     return data
@@ -61,10 +62,10 @@ def save_to_csv(out_path, tracks):
             for i, bbox in enumerate(track['bboxes']):
                 row = {'id': id_,
                        'frame': track['start_frame'] + i,
-                       'x': bbox[0],
                        'y': bbox[1],
-                       'w': bbox[2] - bbox[0],
+                       'x': bbox[0],
                        'h': bbox[3] - bbox[1],
+                       'w': bbox[2] - bbox[0],
                        'score': track['max_score'],
                        'wx': -1,
                        'wy': -1,
@@ -89,8 +90,11 @@ def iou(bbox1, bbox2):
     bbox1 = [float(x) for x in bbox1]
     bbox2 = [float(x) for x in bbox2]
 
-    (x0_1, y0_1, x1_1, y1_1) = bbox1
-    (x0_2, y0_2, x1_2, y1_2) = bbox2
+    # (x0_1, y0_1, x1_1, y1_1) = bbox1
+    # (x0_2, y0_2, x1_2, y1_2) = bbox2
+
+    (y0_1, x0_1, y1_1, x1_1) = bbox1
+    (y0_2, x0_2, y1_2, x1_2) = bbox2
 
     # get the overlap rectangle
     overlap_x0 = max(x0_1, x0_2)
@@ -111,13 +115,13 @@ def iou(bbox1, bbox2):
     return size_intersection / size_union
 
 
-def track_interpolation(tracks_finished):
+def interp_tracks(tracks_finished):
     """
     The Kalman-IOU tracker can skip frames, however the DETRAC toolkit takes off points for each frame missing,
-    therefore skipping 50% of the frames will effectively cap the maximum MOTA at 50%.
-    Therefore we perform a simple linear interpolation to fill in the gaps.
+    and skipping 50% of the frames will effectively cap the maximum MOTA at 50%.
+    We perform a simple linear interpolation to fill in the gaps.
     """
-    processed_tracks = []
+    furnished_tracks = []
     
     for ftracks in tracks_finished:
         starting_frame = ftracks[0]['frame']
@@ -138,6 +142,6 @@ def track_interpolation(tracks_finished):
         for i in range(4):
             interp_track[frames_missing_abs, i] = np.interp(frames_missing, frames_present, interp_track[frames_present_abs, i])
         
-        processed_tracks.append([{'roi': interp_track[f, :].tolist(), 'frame': f + starting_frame} for f in range(ending_frame - starting_frame + 1)])
+        furnished_tracks.append([{'roi': interp_track[f, :].tolist(), 'frame': f + starting_frame} for f in range(ending_frame - starting_frame + 1)])
     
-    return processed_tracks
+    return furnished_tracks
